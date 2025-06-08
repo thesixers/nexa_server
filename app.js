@@ -1,123 +1,120 @@
-import express from 'express'
+import express from "express"
 import http from 'http'
 import { Server } from 'socket.io'
 import cors from 'cors'
+import Users from './model/user.js';
+import generateOtp from './middlewares/generateOtp.js';
+import Temp from './model/tempUser.js';
+import { sendOtp } from './middlewares/mail.js';
+import { createToken, getFutureTime, isCurrentTimeGreater, verifyToken } from './middlewares/all.js';
+import { dbConnect } from './mongodb.js';
 
 const app = express()
-const server = http.createServer(app)
-app.use(cors())
+const server = http.createServer(app);
+app.use(cors()) 
 
-const users = {}
-const messages = {}
 
 const io = new Server(server, {
     cors:{
-        origin: "http://localhost:5173",
-        methods: ["GET", "POST"]
+        origin: "*"
     }
-})
+}); 
+
+
+const users = new Map()
+
+dbConnect()
+
+
+app.use(express.json()); 
 
 io.on('connection', (socket) => {
-    let uid = socket.handshake.query.uid
-    console.log(`${socket.id} just connected`);
-    console.log(`${socket.handshake.query.uid} just connected`);
-    users[uid] = {uid: uid, socketId: socket.id}
-
-    console.log(users);
-
-    socket.on('sendMessage', ({message}) => { 
-        socket.broadcast.emit('receiveMessage', message)
+    socket.on("register", ({phoneNumber}) => {
+      console.log(socket.id + " is connected with phonenumber: " + phoneNumber);
+        let isUserOnline = users.has(phoneNumber)
+        if(!isUserOnline) users.set(phoneNumber, socket.id);
+        console.log(users);
     })
 
-   socket.on('joinRoom', (room) => {
-    socket.join(room)
-     console.log(`${socket.id} just joined room `+ room);
-   }) 
- 
-    socket.on('sendMessageToRoom', (data) => {
-        console.log(data);
-        socket.to(data.room).emit('RM', data) 
+
+    socket.on('disconnect', () => {
+      console.log(`user ${socket.id} has gone offline`);
+      users.keys().forEach(key => {
+        if(users.get(key) === socket.id) users.delete(key);
+      })
     })
-})  
+
+    socket.on('signal', ({ to, from, signal, calltype }) => {
+        console.log(`user ${from} is calling ${to}`);
+        let isCalleOnline = users.get(to);
+        if(isCalleOnline){
+          // let {phoneNo, name} = Users.findOne({phoneNo: from});
+          io.to(isCalleOnline).emit('signal', { signal, from: users.get(from), calltype, callerDetails: {} });
+        }
+        // else
+        // io.to(users.get(from)).emit('callernotonline', { signal, from: users.get(from), calltype });
+    });
+
+    socket.on('endcall', ({ to, from }) => {
+      io.to(users.get(to)).emit("endcall", {from: users.get(from)});
+    });
+
+  socket.on('holdcall', ({to, from})=>{
+    io.to(users.get(to)).emit('holdcall', {from: users.get(from)})
+  });
+
+  socket.on('resumecall', ({to, from})=>{
+    io.to(users.get(to)).emit('resumecall', {from: users.get(from)})
+  });
 
 
-server.listen(4000, ()=> {
-    console.log('server is running on port 4000');
+});
+
+// SIGN IN WITH EMAIL
+app.post('/nexa/api/email/signin', async (req,res) => {
+  console.log("req came in");
+  let {username, fullName, nexaId, avatar} = req.body;
+  try {
+    
+    const User = await Users.findOne({nexaId});
+    
+    if(!User){
+      const user = await Users.create({username, fullName, nexaId, avatar})
+      let { contact, callHistory, blockedUsers, nexaId, avatar, username } = user;
+      console.log({ contact, callHistory, blockedUsers, nexaId, avatar, username }); 
+      // create a jwt for the user
+      const token = createToken(user.id)
+      
+      res.status(200).json({user: {nexaId, avatar, username}, token, contact, callHistory, blockedUsers})
+    }else{
+      let { contact, callHistory, blockedUsers, nexaId, avatar, username } = User;
+      console.log({ contact, callHistory, blockedUsers, nexaId, avatar, username }); 
+
+      // create a jwt for the user
+      const token = createToken(User.id)
+      res.status(200).json({user: {nexaId, avatar, username}, token, contact, callHistory, blockedUsers})
+    }
+  } catch (error) {
+    console.log(error);
+  }
+  
+});
+
+// GET USER  DATA
+app.get('/nexa/api/user/:id', async (req,res) => {
+  let nexaId = req.params.id;
+  let token = req.headers['authorization'];
+  
+  let isTokenValid = verifyToken(token);
+  if(!isTokenValid) return res.status(401).json({E: 'Invalid token'});
+  
+  let user = await Users.findOne({nexaId});
+  if(!user) return res.status(404).json({E: 'User not found'});
+  
+  res.status(200).json({user})
 })
 
 
-// import express from 'express'
-// import http from 'http'
-// import { Server } from 'socket.io'
-// import cors from 'cors'
-// import Users from './model/user.js';
-// import generateOtp from './middlewares/generateOtp.js';
-
-
-// const app = express();
-// const server = http.createServer(app);
-// app.use(cors())
-
-// const users = {}
-
-// const io = new Server(server, {
-//     cors:{
-//         origin: "http://localhost:6969",
-//         methods: ["GET", "POST"]
-//     }
-// })
-
-// io.on('connection', (socket) => {
-//     socket.id = socket.handshake.query.userNo;
-//     console.log(`a new user just connected ${socket.id}`);
-//     if(!users[socket.id]){
-//         users[socket.id] = socket.id;
-//     }
-
-//     socket.emit("yourID", socket.id)
-//     socket.emit("allUsers", users)
-
-//     socket.on('disconnect', () => {
-//         delete users[socket.id]
-//     })
-
-//     socket.on('callUser', ({ userToCall, signal, from }) => {
-//         console.log(`user ${from} is calling ${userToCall}`);
-//         io.to(userToCall).emit('incomingCall', { signal: signal, from: from });
-//     });
-
-//     socket.on('ringing', ({caller, status}) => {
-//       io.to(caller).emit('ringing', status);
-//     });
-
-//     socket.on('answerCall', ({ signal, to }) => {
-//       io.to(to).emit('callAccepted', signal);
-//     });
-
-//   socket.on('endCall', (to)=>{
-//     console.log('ending call'+ to);
-//     io.to(to).emit('endCall')
-//   });
-
-// });
-
-// app.post('/nexa/acc/signin/checkno', async (req,res) => {
-//   let { phoneNo } = req.body;
-  
-//   try {
-//     let user = await Users.findOne({phoneNo});
-//     let isUserExist = !user ? false : true;
-//     let otp = generateOtp();
-//     // function to send otp to users phone
-
-//     res.status(200).json({isUserExist})
-    
-//   } catch (err) {
-//     console.log(err.message);
-//   }
-// })
-
-
-// server.listen(5000, () => {
-//   console.log('Server running on port 5000');
-// });
+server.listen(5000, () => {
+  console.log('Server running on port 5000');
+});

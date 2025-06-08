@@ -20,7 +20,6 @@
     "ejs": "^3.1.10",
     "express": "^4.21.1",
     "express-fileupload": "^1.5.1",
-    "genesix": "^1.4.0",
     "googleapis": "^144.0.0",
     "helmet": "^8.0.0",
     "imap-simple": "^5.1.0",
@@ -28,13 +27,9 @@
     "mongoose": "^8.8.3",
     "morgan": "^1.10.0",
     "nodemon": "^3.1.7",
-    "postgres": "^3.4.5",
-    "socket.io": "^4.8.1",
-    "twilio": "^5.4.2",
-    "ws": "^8.18.0"
+    "socket.io": "^4.8.1"
   },
   "devDependencies": {
-    "firebase-admin": "^13.1.0",
     "nodemailer": "^6.10.0"
   }
 }
