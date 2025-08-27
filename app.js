@@ -80,9 +80,6 @@ io.on("connection", (socket) => {
   });
 });
 
-app.get('/', (req, res) => {
-  console.log("hello");
-})
 
 // SIGN IN WITH GOOGLE
 app.post("/nexa/api/google/signin", async (req, res) => {
