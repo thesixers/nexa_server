@@ -25,6 +25,7 @@ const io = new Server(server, {
   cors: {
     origin: "*",
     credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE"],
   },
 });
 
@@ -79,6 +80,10 @@ io.on("connection", (socket) => {
   });
 });
 
+app.get('/', (req, res) => {
+  console.log("hello");
+})
+
 // SIGN IN WITH GOOGLE
 app.post("/nexa/api/google/signin", async (req, res) => {
   console.log("req came in");
@@ -98,7 +103,7 @@ app.post("/nexa/api/google/signin", async (req, res) => {
 
 app.post("/nexa/api/email/otp", async (req, res) => {
   console.log(req.body);
-  let { email } = req.body;
+  let { email } = req.body; 
 
   try {
     // generate otp
