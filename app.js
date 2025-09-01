@@ -5,7 +5,7 @@ import cors from "cors";
 import Users from "./model/user.js";
 import generateOtp from "./middlewares/generateOtp.js";
 import Temp from "./model/tempUser.js";
-import { sendOtp } from "./middlewares/mail.js";
+import { sendOtp, sendPhoneOtp } from "./middlewares/mail.js";
 import {
   createToken,
   getFutureTime,
@@ -13,6 +13,7 @@ import {
   verifyToken,
 } from "./middlewares/all.js";
 import { dbConnect } from "./mongodb.js";
+import PhoneOTP from "./model/phoneOtp.js";
 
 const app = express();
 const server = http.createServer(app);
@@ -36,6 +37,7 @@ dbConnect();
 app.use(express.json());
 
 io.on("connection", (socket) => {
+  // 
   socket.on("register", ({ phoneNumber }) => {
     console.log(socket.id + " is connected with phonenumber: " + phoneNumber);
     let isUserOnline = users.has(phoneNumber);
@@ -79,7 +81,6 @@ io.on("connection", (socket) => {
     io.to(users.get(to)).emit("resumecall", { from: users.get(from) });
   });
 });
-
 
 // SIGN IN WITH GOOGLE
 app.post("/nexa/api/google/signin", async (req, res) => {
@@ -163,6 +164,67 @@ app.get("/nexa/api/user/:id", async (req, res) => {
 
   res.status(200).json({ user });
 });
+
+// ADDING NEW NUMBER
+
+// OTP
+app.post("/nexa/api/number/otp", async (req, res) => {
+  let { fullNumber: phoneNumber, nexaId } = req.body;
+
+  try {
+    // generate otp
+    let otp = generateOtp();
+    let otpExpiry = getFutureTime();
+
+    // store otp for confirmation
+    let tempUser = await PhoneOTP.findOne({ phoneNumber, nexaId });
+    if (!tempUser) {
+      await PhoneOTP.create({ phoneNumber, otp, otpexp: otpExpiry, nexaId });
+    } else {
+      await PhoneOTP.updateOne({ phoneNumber, nexaId }, { otp, otpexp: otpExpiry });
+    }
+    // send otp to user
+    sendPhoneOtp({ phoneNumber, otp });
+
+    // send response back to user
+    return res.status(200).json({ M: "OTP sent to your number" });
+
+  } catch (error) {
+    console.log(error);
+    res.status(500).json({ E: "Something went wrong, request for otp again" });
+  }
+})
+
+// ADD NUMBER
+app.post("/nexa/api/number/add", async (req, res) => {
+  let { fullNumber, nexaId, otp } = req.body;
+
+//  verify otp
+  try {
+    let OTP = await PhoneOTP.findOne({ phoneNumber: fullNumber, nexaId });
+    if (!OTP) return res.status(404).json({ E: "OTP not found" });
+    if(OTP !== otp) return res.status(400).json({E: "Incorrect otp"});
+    // get current date 
+    let currentDate = new Date();
+    if(OTP.otpexp > currentDate) return res.status(401).json({ E: "OTP expired" });
+
+    // if otp is correct add number if not send 
+    // find user and update the user number
+    // let user = await Users.findOneAndUpdate({ nexaId }, { $push: { phoneNumbers: fullNumber } }, { new: true });
+    // if(!user) return res.status(404).json({ E: "User not found" });
+    // user.phoneNumbers.push(fullNumber);
+    // await user.save();
+    await Users.findOneAndUpdate({ nexaId }, { $push: { phoneNumbers: fullNumber } });
+
+    // delete otp
+    await PhoneOTP.deleteOne({ phoneNumber: fullNumber, nexaId, otp });
+
+    // send response.
+    return res.status(200).json({ M: "Number added successfully" });
+  } catch (error) {
+    console.log(error);
+  }
+})
 
 server.listen(5000, () => {
   console.log("Server running on port 5000");

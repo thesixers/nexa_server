@@ -26,3 +26,8 @@ export const sendOtp = ({email,otp}) => {
         console.log(info);
     })
 }
+
+export const sendPhoneOtp = ({phoneNumber,otp}) => {
+    // using a service for now just log the phone
+    console.log({phoneNumber, otp});
+}
