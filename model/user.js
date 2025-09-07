@@ -8,7 +8,7 @@ const newUser = new Schema({
     status: {type: String, enum:['online', 'offline']},
     bio: {type: String, default: "Hey am using nexa for calls"},
     lastActive: {type: String},
-    avatar: {type: String}
+    avatar: {type: String, default: null},
 }) 
 
 const Users = model('nexaUser', newUser);

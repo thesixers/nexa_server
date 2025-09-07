@@ -26,4 +26,12 @@ export function createToken(id){
 
 export function verifyToken(token){
     return jwt.verify(token, JWT_SECRET)
-}   
+}  
+
+
+export function tokenVeryifyMiddleware(req, res, next){
+    let token = req.headers['authorization'];
+    console.log(token);
+    if(!token) return res.status(401).json({E: "No token provided"});
+    next();
+}

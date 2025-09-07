@@ -10,6 +10,7 @@ import {
   createToken,
   getFutureTime,
   isCurrentTimeGreater,
+  tokenVeryifyMiddleware,
   verifyToken,
 } from "./middlewares/all.js";
 import { dbConnect } from "./mongodb.js";
@@ -17,10 +18,12 @@ import PhoneOTP from "./model/phoneOtp.js";
 
 const app = express();
 const server = http.createServer(app);
-app.use(cors({
-  origin: "*",
-  methods: ["GET", "POST", "PUT", "DELETE"],
-}));
+app.use(
+  cors({
+    origin: "*",
+    methods: ["GET", "POST", "PUT", "DELETE"],
+  })
+);
 
 const io = new Server(server, {
   cors: {
@@ -30,55 +33,80 @@ const io = new Server(server, {
   },
 });
 
+const onlineUsers = new Map();
 const users = new Map();
+/* remember to check and authenticate user token for each request */
+/* also note the person is not calling his/her self */
 
 dbConnect();
+
+function getUserDetails(number) {
+  for (let [numbers, details] of onlineUsers.entries()) {
+    if (numbers.includes(number)) {
+      return details;
+    }
+  }
+  return null;
+}
 
 app.use(express.json());
 
 io.on("connection", (socket) => {
-  // 
-  socket.on("register", ({ phoneNumber }) => {
-    console.log(socket.id + " is connected with phonenumber: " + phoneNumber);
-    let isUserOnline = users.has(phoneNumber);
-    if (!isUserOnline) users.set(phoneNumber, socket.id);
-    console.log(users);
-  });
-
-  socket.on("disconnect", () => {
-    console.log(`user ${socket.id} has gone offline`);
-    users.keys().forEach((key) => {
-      if (users.get(key) === socket.id) users.delete(key);
-    });
+  socket.on("register", async ({ nexaId }) => {
+    console.log(
+      `${socket.id} just connected to nexa server with this nexa id: ${nexaId}`
+    );
+    let isUserOnline = onlineUsers.get(nexaId);
+    if (!isUserOnline) {
+      let details = await Users.findOne({ nexaId });
+      onlineUsers.set(nexaId, { socketId: socket.id, details });
+    } else {
+      onlineUsers.set(nexaId, { ...isUserOnline, socketId: socket.id });
+    }
+    console.log(`user ${nexaId} is online`);
   });
 
   socket.on("signal", ({ to, from, signal, calltype }) => {
     console.log(`user ${from} is calling ${to}`);
-    let isCalleOnline = users.get(to);
+
+    let isCalleOnline = onlineUsers.get(to);
+    let caller = onlineUsers.get(from);
+    const Unknown = { name: "Unknown", nexaId: from, avatar: null };
     if (isCalleOnline) {
-      // let {phoneNo, name} = Users.findOne({phoneNo: from});
-      io.to(isCalleOnline).emit("signal", {
+      io.to(isCalleOnline.socketId).emit("signal", {
         signal,
-        from: users.get(from),
         calltype,
-        callerDetails: {},
+        Caller: caller.details ? caller.details : Unknown,
       });
     }
     // else
     // emit user not available to the caller
-    // io.to(users.get(from)).emit('callernotonline', { signal, from: users.get(from), calltype });
+    // io.to(users.get(from)).emit('unavailable', { signal, from: users.get(from), calltype });
   });
 
   socket.on("endcall", ({ to, from }) => {
-    io.to(users.get(to)).emit("endcall", { from: users.get(from) });
+    io.to(onlineUsers.get(to)).emit("end_call", {
+      from: onlineUsers.get(from),
+    });
   });
 
-  socket.on("holdcall", ({ to, from }) => {
-    io.to(users.get(to)).emit("holdcall", { from: users.get(from) });
+  socket.on("mute_call", ({ to, from }) => {
+    io.to(onlineUsers.get(to)).emit("mute_call", {
+      from: onlineUsers.get(from),
+    });
   });
 
-  socket.on("resumecall", ({ to, from }) => {
-    io.to(users.get(to)).emit("resumecall", { from: users.get(from) });
+  socket.on("resume_call", ({ to, from }) => {
+    io.to(onlineUsers.get(to)).emit("resume_call", {
+      from: onlineUsers.get(from),
+    });
+  });
+
+  socket.on("disconnect", () => {
+    console.log(`user ${socket.id} has gone offline`);
+    onlineUsers.entries().forEach(([key, value]) => {
+      if (value.socketId === socket.id) onlineUsers.delete(key);
+    });
   });
 });
 
@@ -89,10 +117,11 @@ app.post("/nexa/api/google/signin", async (req, res) => {
   try {
     let user = await Users.findOne({ nexaId });
 
-    if (!user) user = await Users.create({ username, fullName, nexaId, avatar });
+    if (!user)
+      user = await Users.create({ username, fullName, nexaId, avatar });
 
-      const token = createToken(user.id);
-      return res.status(200).json({ user, token });
+    const token = createToken(user.id);
+    return res.status(200).json({ user, token });
   } catch (error) {
     console.log(error);
     return res.status(500).json({ E: error.message });
@@ -101,7 +130,7 @@ app.post("/nexa/api/google/signin", async (req, res) => {
 
 app.post("/nexa/api/email/otp", async (req, res) => {
   console.log(req.body);
-  let { email } = req.body; 
+  let { email } = req.body;
 
   try {
     // generate otp
@@ -133,10 +162,11 @@ app.post("/nexa/api/email/signin", async (req, res) => {
 
     if (!tempUser) return res.status(404).json({ E: "User not found" });
 
-    if (tempUser.otp !== otp) return res.status(401).json({ E: "Invalid OTP" });
+    if (tempUser.otp !== otp)
+      return res.status(401).json({ E: "Incorrect OTP" });
 
     if (isCurrentTimeGreater(tempUser.otpexp))
-      return res.status(401).json({ E: "OTP expired" }); 
+      return res.status(401).json({ E: "OTP expired" });
 
     // generate auth token
     let token = createToken(tempUser.id);
@@ -152,12 +182,8 @@ app.post("/nexa/api/email/signin", async (req, res) => {
 });
 
 // GET USER  DATA
-app.get("/nexa/api/user/:id", async (req, res) => {
+app.get("/nexa/api/user/:id", tokenVeryifyMiddleware, async (req, res) => {
   let nexaId = req.params.id;
-  let token = req.headers["authorization"];
-
-  let isTokenValid = verifyToken(token);
-  if (!isTokenValid) return res.status(401).json({ E: "Invalid token" });
 
   let user = await Users.findOne({ nexaId });
   if (!user) return res.status(404).json({ E: "User not found" });
@@ -166,9 +192,8 @@ app.get("/nexa/api/user/:id", async (req, res) => {
 });
 
 // ADDING NEW NUMBER
-
 // OTP
-app.post("/nexa/api/number/otp", async (req, res) => {
+app.post("/nexa/api/number/otp", tokenVeryifyMiddleware, async (req, res) => {
   let { fullNumber: phoneNumber, nexaId } = req.body;
 
   try {
@@ -181,40 +206,46 @@ app.post("/nexa/api/number/otp", async (req, res) => {
     if (!tempUser) {
       await PhoneOTP.create({ phoneNumber, otp, otpexp: otpExpiry, nexaId });
     } else {
-      await PhoneOTP.updateOne({ phoneNumber, nexaId }, { otp, otpexp: otpExpiry });
+      await PhoneOTP.updateOne(
+        { phoneNumber, nexaId },
+        { otp, otpexp: otpExpiry }
+      );
     }
     // send otp to user
     sendPhoneOtp({ phoneNumber, otp });
 
     // send response back to user
     return res.status(200).json({ M: "OTP sent to your number" });
-
   } catch (error) {
     console.log(error);
     res.status(500).json({ E: "Something went wrong, request for otp again" });
   }
-})
+});
 
 // ADD NUMBER
-app.post("/nexa/api/number/add", async (req, res) => {
+app.post("/nexa/api/number/add", tokenVeryifyMiddleware, async (req, res) => {
   let { fullNumber, nexaId, otp } = req.body;
 
-//  verify otp
+  //  verify otp
   try {
     let OTP = await PhoneOTP.findOne({ phoneNumber: fullNumber, nexaId });
     if (!OTP) return res.status(404).json({ E: "OTP not found" });
-    if(OTP !== otp) return res.status(400).json({E: "Incorrect otp"});
-    // get current date 
+    if (OTP !== otp) return res.status(400).json({ E: "Incorrect otp" });
+    // get current date
     let currentDate = new Date();
-    if(OTP.otpexp > currentDate) return res.status(401).json({ E: "OTP expired" });
+    if (OTP.otpexp > currentDate)
+      return res.status(401).json({ E: "OTP expired" });
 
-    // if otp is correct add number if not send 
+    // if otp is correct add number if not send
     // find user and update the user number
     // let user = await Users.findOneAndUpdate({ nexaId }, { $push: { phoneNumbers: fullNumber } }, { new: true });
     // if(!user) return res.status(404).json({ E: "User not found" });
     // user.phoneNumbers.push(fullNumber);
     // await user.save();
-    await Users.findOneAndUpdate({ nexaId }, { $push: { phoneNumbers: fullNumber } });
+    await Users.findOneAndUpdate(
+      { nexaId },
+      { $push: { phoneNumbers: fullNumber } }
+    );
 
     // delete otp
     await PhoneOTP.deleteOne({ phoneNumber: fullNumber, nexaId, otp });
@@ -224,7 +255,26 @@ app.post("/nexa/api/number/add", async (req, res) => {
   } catch (error) {
     console.log(error);
   }
-})
+});
+
+// check if Usersuser exists
+app.post("/nexa/api/checkcontact", tokenVeryifyMiddleware, async (req, res) => {
+  let { fullNumber } = req.body;
+  try {
+    let user = users.get(fullNumber);
+    if (!user) {
+      user = await Users.findOne({ phoneNumbers: fullNumber }).select(
+        "-lastActive -status -bio -__v"
+      );
+      if (!user) return res.status(404).json({ E: "User not found" });
+      users.set(fullNumber, user);
+    }
+    if (!user) return res.status(404).json({ E: "User not found" });
+    return res.status(200).json({ nexaId: user.nexaId });
+  } catch (error) {
+    return res.status(500).json({ E: "Internal Server Error" });
+  }
+});
 
 server.listen(5000, () => {
   console.log("Server running on port 5000");
