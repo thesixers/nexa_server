@@ -30,8 +30,12 @@ export function verifyToken(token){
 
 
 export function tokenVeryifyMiddleware(req, res, next){
+    console.log("middleware");
     let token = req.headers['authorization'];
-    console.log(token);
     if(!token) return res.status(401).json({E: "No token provided"});
+    let fToken = token.split(" ")[1];
+    let decoded = verifyToken(fToken);
+    if(!decoded) return res.status(401).json({E: "Invalid token"});
+    req.userId = decoded.id;
     next();
 }

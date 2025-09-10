@@ -40,15 +40,6 @@ const users = new Map();
 
 dbConnect();
 
-function getUserDetails(number) {
-  for (let [numbers, details] of onlineUsers.entries()) {
-    if (numbers.includes(number)) {
-      return details;
-    }
-  }
-  return null;
-}
-
 app.use(express.json());
 
 io.on("connection", (socket) => {
@@ -78,13 +69,12 @@ io.on("connection", (socket) => {
         calltype,
         Caller: caller.details ? caller.details : Unknown,
       });
+    }else{
+      io.to(users.get(from)).emit('unavailable', { signal, from: users.get(from), calltype });
     }
-    // else
-    // emit user not available to the caller
-    // io.to(users.get(from)).emit('unavailable', { signal, from: users.get(from), calltype });
   });
 
-  socket.on("endcall", ({ to, from }) => {
+  socket.on("end_call", ({ to, from }) => {
     io.to(onlineUsers.get(to)).emit("end_call", {
       from: onlineUsers.get(from),
     });
@@ -257,22 +247,26 @@ app.post("/nexa/api/number/add", tokenVeryifyMiddleware, async (req, res) => {
   }
 });
 
+let count = 0;
+
 // check if Usersuser exists
 app.post("/nexa/api/checkcontact", tokenVeryifyMiddleware, async (req, res) => {
-  let { fullNumber } = req.body;
+  count++;
+  let { phone: fullNumber } = req.body;
+  console.log("request came in ", count , fullNumber);
   try {
     let user = users.get(fullNumber);
     if (!user) {
-      user = await Users.findOne({ phoneNumbers: fullNumber }).select(
+      user = await Users.findOne({ phones: fullNumber }).select(
         "-lastActive -status -bio -__v"
       );
-      if (!user) return res.status(404).json({ E: "User not found" });
-      users.set(fullNumber, user);
     }
     if (!user) return res.status(404).json({ E: "User not found" });
+    console.log("user found ", fullNumber, user.nexaId)
+    users.set(fullNumber, user);
     return res.status(200).json({ nexaId: user.nexaId });
   } catch (error) {
-    return res.status(500).json({ E: "Internal Server Error" });
+    return res.status(500).json({ E: "Internal Server Error" }); 
   }
 });
 
