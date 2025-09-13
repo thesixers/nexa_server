@@ -28,8 +28,6 @@ app.use(
 const io = new Server(server, {
   cors: {
     origin: "*",
-    credentials: true,
-    methods: ["GET", "POST", "PUT", "DELETE"],
   },
 });
 
@@ -63,15 +61,20 @@ io.on("connection", (socket) => {
     let isCalleOnline = onlineUsers.get(to);
     let caller = onlineUsers.get(from);
     const Unknown = { name: "Unknown", nexaId: from, avatar: null };
-    if (isCalleOnline) {
+    if (!isCalleOnline){
+      io.to(users.get(from)).emit('unavailable', { signal, from: users.get(from), calltype });
+      return;
+    }
+
+    if (isCalleOnline && from !== to) {
       io.to(isCalleOnline.socketId).emit("signal", {
         signal,
         calltype,
         Caller: caller.details ? caller.details : Unknown,
       });
-    }else{
-      io.to(users.get(from)).emit('unavailable', { signal, from: users.get(from), calltype });
     }
+
+    if(from === to ) console.log("user cannot call himself/herself");
   });
 
   socket.on("end_call", ({ to, from }) => {
@@ -93,9 +96,11 @@ io.on("connection", (socket) => {
   });
 
   socket.on("disconnect", () => {
-    console.log(`user ${socket.id} has gone offline`);
     onlineUsers.entries().forEach(([key, value]) => {
-      if (value.socketId === socket.id) onlineUsers.delete(key);
+      if (value.socketId === socket.id){
+        console.log(`user ${key} has gone offline`);
+        onlineUsers.delete(key)
+      };
     });
   });
 });
@@ -247,13 +252,11 @@ app.post("/nexa/api/number/add", tokenVeryifyMiddleware, async (req, res) => {
   }
 });
 
-let count = 0;
 
 // check if Usersuser exists
 app.post("/nexa/api/checkcontact", tokenVeryifyMiddleware, async (req, res) => {
-  count++;
   let { phone: fullNumber } = req.body;
-  console.log("request came in ", count , fullNumber);
+
   try {
     let user = users.get(fullNumber);
     if (!user) {
@@ -261,9 +264,10 @@ app.post("/nexa/api/checkcontact", tokenVeryifyMiddleware, async (req, res) => {
         "-lastActive -status -bio -__v"
       );
     }
+
     if (!user) return res.status(404).json({ E: "User not found" });
-    console.log("user found ", fullNumber, user.nexaId)
     users.set(fullNumber, user);
+    
     return res.status(200).json({ nexaId: user.nexaId });
   } catch (error) {
     return res.status(500).json({ E: "Internal Server Error" }); 
