@@ -81,18 +81,21 @@ io.on("connection", (socket) => {
     io.to(onlineUsers.get(to)).emit("end_call", {
       from: onlineUsers.get(from),
     });
+    console.log(`user ${from} ended the call with ${to}`);
   });
 
   socket.on("mute_call", ({ to, from }) => {
     io.to(onlineUsers.get(to)).emit("mute_call", {
       from: onlineUsers.get(from),
     });
+    console.log(`user ${from} muted the call with ${to}`);
   });
 
   socket.on("resume_call", ({ to, from }) => {
     io.to(onlineUsers.get(to)).emit("resume_call", {
       from: onlineUsers.get(from),
     });
+    console.log(`user ${from} resumed the call with ${to}`);
   });
 
   socket.on("disconnect", () => {
@@ -177,8 +180,8 @@ app.post("/nexa/api/email/signin", async (req, res) => {
 });
 
 // GET USER  DATA
-app.get("/nexa/api/user/:id", tokenVeryifyMiddleware, async (req, res) => {
-  let nexaId = req.params.id;
+app.get("/nexa/api/user/:nexaId", tokenVeryifyMiddleware, async (req, res) => {
+  const nexaId = req.params.nexaId;
 
   let user = await Users.findOne({ nexaId });
   if (!user) return res.status(404).json({ E: "User not found" });
@@ -220,30 +223,24 @@ app.post("/nexa/api/number/otp", tokenVeryifyMiddleware, async (req, res) => {
 // ADD NUMBER
 app.post("/nexa/api/number/add", tokenVeryifyMiddleware, async (req, res) => {
   let { fullNumber, nexaId, otp } = req.body;
-
+  
   //  verify otp
   try {
     let OTP = await PhoneOTP.findOne({ phoneNumber: fullNumber, nexaId });
     if (!OTP) return res.status(404).json({ E: "OTP not found" });
-    if (OTP !== otp) return res.status(400).json({ E: "Incorrect otp" });
+    if (OTP?.otp !== otp) return res.status(400).json({ E: "Incorrect otp" });
     // get current date
     let currentDate = new Date();
     if (OTP.otpexp > currentDate)
       return res.status(401).json({ E: "OTP expired" });
 
-    // if otp is correct add number if not send
-    // find user and update the user number
-    // let user = await Users.findOneAndUpdate({ nexaId }, { $push: { phoneNumbers: fullNumber } }, { new: true });
-    // if(!user) return res.status(404).json({ E: "User not found" });
-    // user.phoneNumbers.push(fullNumber);
-    // await user.save();
-    await Users.findOneAndUpdate(
+    Users.findOneAndUpdate(
       { nexaId },
-      { $push: { phoneNumbers: fullNumber } }
+      { $push: { phoneNumbers: fullNumber } },
+      { new: true }
     );
 
-    // delete otp
-    await PhoneOTP.deleteOne({ phoneNumber: fullNumber, nexaId, otp });
+    PhoneOTP.deleteOne({ phoneNumber: fullNumber, nexaId, otp });
 
     // send response.
     return res.status(200).json({ M: "Number added successfully" });
@@ -273,6 +270,25 @@ app.post("/nexa/api/checkcontact", tokenVeryifyMiddleware, async (req, res) => {
     return res.status(500).json({ E: "Internal Server Error" }); 
   }
 });
+
+
+app.put("/nexa/api/user/update/:nexaId", tokenVeryifyMiddleware, async (req, res) => {
+  console.log("req came in update",req.body);
+  let { nexaId } = req.params;
+  try {
+    let updatedUser = await Users.findOneAndUpdate(
+      { nexaId },
+      { ...req.body },
+      { new: true }
+    )
+
+    if(!updatedUser) return res.status(404).json({ E: "User not found" });
+    return res.status(200).json({ user: updatedUser });
+  } catch (error) {
+    return res.status(500).json({ E: "Internal Server Error" });
+  }
+});
+
 
 server.listen(5000, () => {
   console.log("Server running on port 5000");
