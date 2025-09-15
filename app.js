@@ -152,7 +152,6 @@ app.post("/nexa/api/email/otp", async (req, res) => {
 });
 
 app.post("/nexa/api/email/signin", async (req, res) => {
-  console.log(req.body);
   let { otp, username, fullName, nexaId, avatar } = req.body;
 
   try {
@@ -234,21 +233,39 @@ app.post("/nexa/api/number/add", tokenVeryifyMiddleware, async (req, res) => {
     if (OTP.otpexp > currentDate)
       return res.status(401).json({ E: "OTP expired" });
 
-    Users.findOneAndUpdate(
+     let user = await Users.findOneAndUpdate(
       { nexaId },
-      { $push: { phoneNumbers: fullNumber } },
+      { $push: { phones: fullNumber } },
       { new: true }
     );
 
-    PhoneOTP.deleteOne({ phoneNumber: fullNumber, nexaId, otp });
+    if (!user) return res.status(404).json({ E: "User not found" });
+
+    // delete otp after successful verification
+    await PhoneOTP.deleteOne({ phoneNumber: fullNumber, nexaId, otp });
 
     // send response.
-    return res.status(200).json({ M: "Number added successfully" });
+    return res.status(200).json({ user, M: "Number added successfully" });
   } catch (error) {
     console.log(error);
   }
 });
 
+// REMOVE NUMBER
+app.put("/nexa/api/number/remove", tokenVeryifyMiddleware, async (req, res) => {
+  let { phoneNumber, nexaId } = req.body;
+  try {
+    let user = await Users.findOneAndUpdate(
+      { nexaId },
+      { $pull: { phones: phoneNumber } },
+      { new: true }
+    );
+    if (!user) return res.status(404).json({ E: "User not found" });
+    return res.status(200).json({ user, M: "Number removed successfully" });
+  } catch (error) {
+    return res.status(500).json({ E: "Internal Server Error" });
+  }
+})
 
 // check if Usersuser exists
 app.post("/nexa/api/checkcontact", tokenVeryifyMiddleware, async (req, res) => {
