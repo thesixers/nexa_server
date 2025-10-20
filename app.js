@@ -15,6 +15,8 @@ import {
 } from "./middlewares/all.js";
 import { dbConnect } from "./mongodb.js";
 import PhoneOTP from "./model/phoneOtp.js";
+import { connectedUsers, disconnectUser, signalHandler } from "./controllers/ws_controller.js";
+import { connect } from "http2";
 
 const app = express();
 const server = http.createServer(app);
@@ -31,8 +33,9 @@ const io = new Server(server, {
   },
 });
 
-const onlineUsers = new Map();
+const onlineUsers = new Map(); 
 const users = new Map();
+const phones = new Map(); //phone number to nexaId map
 /* remember to check and authenticate user token for each request */
 /* also note the person is not calling his/her self */
 
@@ -42,71 +45,17 @@ app.use(express.json());
 
 io.on("connection", (socket) => {
   socket.on("register", async ({ nexaId }) => {
-    console.log(
-      `${socket.id} just connected to nexa server with this nexa id: ${nexaId}`
-    );
-    let isUserOnline = onlineUsers.get(nexaId);
-    if (!isUserOnline) {
-      let details = await Users.findOne({ nexaId });
-      onlineUsers.set(nexaId, { socketId: socket.id, details });
-    } else {
-      onlineUsers.set(nexaId, { ...isUserOnline, socketId: socket.id });
-    }
-    console.log(`user ${nexaId} is online`);
+    connectedUsers(socket, onlineUsers, Users, nexaId);
   });
 
-  socket.on("signal", ({ to, from, signal, calltype }) => {
-    console.log(`user ${from} is calling ${to}`);
-
-    let isCalleOnline = onlineUsers.get(to);
-    let caller = onlineUsers.get(from);
-    const Unknown = { name: "Unknown", nexaId: from, avatar: null };
-    if (!isCalleOnline){
-      io.to(users.get(from)).emit('unavailable', { signal, from: users.get(from), calltype });
-      return;
-    }
-
-    if (isCalleOnline && from !== to) {
-      io.to(isCalleOnline.socketId).emit("signal", {
-        signal,
-        calltype,
-        Caller: caller.details ? caller.details : Unknown,
-      });
-    }
-
-    if(from === to ) console.log("user cannot call himself/herself");
-  });
-
-  socket.on("end_call", ({ to, from }) => {
-    io.to(onlineUsers.get(to)).emit("end_call", {
-      from: onlineUsers.get(from),
-    });
-    console.log(`user ${from} ended the call with ${to}`);
-  });
-
-  socket.on("mute_call", ({ to, from }) => {
-    io.to(onlineUsers.get(to)).emit("mute_call", {
-      from: onlineUsers.get(from),
-    });
-    console.log(`user ${from} muted the call with ${to}`);
-  });
-
-  socket.on("resume_call", ({ to, from }) => {
-    io.to(onlineUsers.get(to)).emit("resume_call", {
-      from: onlineUsers.get(from),
-    });
-    console.log(`user ${from} resumed the call with ${to}`);
+  socket.on("signal", ({ to, from, signal, streamType }) => {
+   signalHandler(to, from, signal, streamType, io, onlineUsers, phones);
   });
 
   socket.on("disconnect", () => {
-    onlineUsers.entries().forEach(([key, value]) => {
-      if (value.socketId === socket.id){
-        console.log(`user ${key} has gone offline`);
-        onlineUsers.delete(key)
-      };
-    });
+    disconnectUser(socket, onlineUsers);
   });
-});
+}); 
 
 // SIGN IN WITH GOOGLE
 app.post("/nexa/api/google/signin", async (req, res) => {
@@ -176,7 +125,7 @@ app.post("/nexa/api/email/signin", async (req, res) => {
   } catch (error) {
     console.log(error.message);
   }
-});
+}); 
 
 // GET USER  DATA
 app.get("/nexa/api/user/:nexaId", tokenVeryifyMiddleware, async (req, res) => {
@@ -267,30 +216,8 @@ app.put("/nexa/api/number/remove", tokenVeryifyMiddleware, async (req, res) => {
   }
 })
 
-// check if Usersuser exists
-app.post("/nexa/api/checkcontact", tokenVeryifyMiddleware, async (req, res) => {
-  let { phone: fullNumber } = req.body;
-
-  try {
-    let user = users.get(fullNumber);
-    if (!user) {
-      user = await Users.findOne({ phones: fullNumber }).select(
-        "-lastActive -status -bio -__v"
-      );
-    }
-
-    if (!user) return res.status(404).json({ E: "User not found" });
-    users.set(fullNumber, user);
-    
-    return res.status(200).json({ nexaId: user.nexaId });
-  } catch (error) {
-    return res.status(500).json({ E: "Internal Server Error" }); 
-  }
-});
-
 
 app.put("/nexa/api/user/update/:nexaId", tokenVeryifyMiddleware, async (req, res) => {
-  console.log("req came in update",req.body);
   let { nexaId } = req.params;
   try {
     let updatedUser = await Users.findOneAndUpdate(
