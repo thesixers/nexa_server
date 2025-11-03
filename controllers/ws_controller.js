@@ -9,6 +9,7 @@ export async function signalHandler(
   onlineUsers,
   phones
 ) {
+  console.log(to, from);
 
   if (from === to) console.log("user cannot call himself/herself");
 
@@ -17,8 +18,7 @@ export async function signalHandler(
 
   console.log(`user ${from} is calling ${nexaId} an ${streamType} call`);
 
-
-  if (!nexaId) return; // user not in nexa yet
+  if (!nexaId) return console.log("user not in nexa yet");
   phones.set(to, nexaId);
 
   // get callee's data
